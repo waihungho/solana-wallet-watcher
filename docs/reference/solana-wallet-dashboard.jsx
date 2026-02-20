@@ -7,6 +7,7 @@ import {
 
 const LAMPORTS = 1_000_000_000;
 const HELIUS = "https://api.helius.xyz/v0/addresses";
+const HELIUS_RPC = "https://mainnet.helius-rpc.com";
 
 // ─── Utility ────────────────────────────────────────────────────────────────
 
@@ -69,6 +70,62 @@ async function fetchTxs(wallet, apiKey, onProgress) {
   }
   onProgress?.(`${all.length} transactions loaded.`);
   return all;
+}
+
+async function fetchHoldings(wallet, apiKey) {
+  const rpcUrl = `${HELIUS_RPC}/?api-key=${apiKey}`;
+
+  // Fetch SOL balance and token assets in parallel
+  const [balRes, assetsRes] = await Promise.all([
+    fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: "sol-bal",
+        method: "getBalance",
+        params: [wallet],
+      }),
+    }),
+    fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: "das-assets",
+        method: "getAssetsByOwner",
+        params: {
+          ownerAddress: wallet,
+          displayOptions: { showFungible: true, showNativeBalance: false },
+          page: 1,
+          limit: 1000,
+        },
+      }),
+    }),
+  ]);
+
+  if (!balRes.ok) throw new Error(`Balance fetch failed: ${balRes.status}`);
+  if (!assetsRes.ok) throw new Error(`Assets fetch failed: ${assetsRes.status}`);
+
+  const balJson = await balRes.json();
+  const assetsJson = await assetsRes.json();
+
+  const sol = (balJson.result?.value ?? 0) / LAMPORTS;
+
+  const tokens = (assetsJson.result?.items || [])
+    .filter(a =>
+      (a.interface === "FungibleToken" || a.interface === "FungibleAsset") &&
+      a.token_info?.balance > 0
+    )
+    .map(a => ({
+      mint: a.id,
+      name: a.content?.metadata?.name || "Unknown",
+      symbol: a.content?.metadata?.symbol || short(a.id),
+      balance: a.token_info.balance,
+      decimals: a.token_info.decimals ?? 0,
+      displayBalance: a.token_info.balance / Math.pow(10, a.token_info.decimals ?? 0),
+    }))
+    .sort((a, b) => b.displayBalance - a.displayBalance);
+
+  return { sol, tokens };
 }
 
 // ─── Analysis ───────────────────────────────────────────────────────────────
