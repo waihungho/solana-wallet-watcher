@@ -345,6 +345,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
   const [data, setData] = useState(null);
   const [isDemo, setIsDemo] = useState(false);
   const [tab, setTab] = useState("flow");
@@ -474,10 +475,29 @@ export default function App() {
               style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.borderLight}`, background: "transparent", color: C.textDim, fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
               Demo</button>
             {shareUrl && (
-              <button onClick={() => { navigator.clipboard?.writeText(shareUrl); }}
+              <button onClick={() => {
+                const copy = (text) => {
+                  if (navigator.clipboard?.writeText) {
+                    return navigator.clipboard.writeText(text);
+                  }
+                  const ta = document.createElement("textarea");
+                  ta.value = text;
+                  ta.style.position = "fixed";
+                  ta.style.opacity = "0";
+                  document.body.appendChild(ta);
+                  ta.select();
+                  document.execCommand("copy");
+                  document.body.removeChild(ta);
+                  return Promise.resolve();
+                };
+                copy(shareUrl).then(() => {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                });
+              }}
                 title="Copy shareable link (wallet only, no API key)"
-                style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.borderLight}`, background: "transparent", color: C.textDim, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
-                Share Link</button>
+                style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${copied ? C.accent : C.borderLight}`, background: copied ? C.accentDim : "transparent", color: copied ? C.accent : C.textDim, fontSize: 11, cursor: "pointer", fontFamily: "inherit", transition: "all 0.2s" }}>
+                {copied ? "Copied!" : "Share Link"}</button>
             )}
           </div>
 
