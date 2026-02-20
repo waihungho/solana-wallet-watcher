@@ -1,3 +1,4 @@
+"use client";
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
