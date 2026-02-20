@@ -286,11 +286,15 @@ function genDemo() {
     days: i + 1, label: `${i + 1}d`, wallets: dcm[i + 1] || 0,
   }));
 
-  // Raw events for 1h/24h windows
+  // Raw events for 1h/6h/24h windows
   const raw = [], now = Date.now();
   for (let k = 0; k < 15; k++) {
     raw.push({ ts: now - Math.random() * 3600000, incoming: +(Math.random() * 3).toFixed(4) * 1, outgoing: 0, counterparty: A[Math.floor(Math.random() * A.length)] });
     raw.push({ ts: now - Math.random() * 3600000, incoming: 0, outgoing: +(Math.random() * 2).toFixed(4) * 1, counterparty: A[Math.floor(Math.random() * A.length)] });
+  }
+  for (let k = 0; k < 25; k++) {
+    raw.push({ ts: now - (Math.random() * 5 + 1) * 3600000, incoming: +(Math.random() * 4).toFixed(4) * 1, outgoing: 0, counterparty: A[Math.floor(Math.random() * A.length)] });
+    raw.push({ ts: now - (Math.random() * 5 + 1) * 3600000, incoming: 0, outgoing: +(Math.random() * 3).toFixed(4) * 1, counterparty: A[Math.floor(Math.random() * A.length)] });
   }
   for (let m = 0; m < 50; m++) {
     raw.push({ ts: now - Math.random() * 86400000, incoming: +(Math.random() * 5).toFixed(4) * 1, outgoing: 0, counterparty: A[Math.floor(Math.random() * A.length)] });
@@ -416,6 +420,7 @@ export default function App() {
   }, [wallet]);
 
   const h1 = useMemo(() => data ? compWin(data.rawEvents, 3600000) : null, [data]);
+  const h6 = useMemo(() => data ? compWin(data.rawEvents, 6 * 3600000) : null, [data]);
   const h24 = useMemo(() => data ? compWin(data.rawEvents, 86400000) : null, [data]);
   const netFlow = useMemo(() => data ? data.dailyData.map(d => ({ ...d, net: +(d.incoming - d.outgoing).toFixed(4) })) : [], [data]);
 
@@ -514,6 +519,10 @@ export default function App() {
           {/* 1 HOUR */}
           <SL icon="⚡" label="Last 1 Hour" color={C.yellow} />
           {h1 && <TWP win={h1} bucketLabel={fmtT} />}
+
+          {/* 6 HOURS */}
+          <SL icon="◔" label="Last 6 Hours" color={C.purple} />
+          {h6 && <TWP win={h6} bucketLabel={fmtT} />}
 
           {/* 24 HOURS */}
           <SL icon="◐" label="Last 24 Hours" color={C.cyan} />
