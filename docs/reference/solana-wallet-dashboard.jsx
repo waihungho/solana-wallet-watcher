@@ -368,6 +368,19 @@ function genDemo() {
   };
 }
 
+function genDemoHoldings() {
+  return {
+    sol: +(Math.random() * 100 + 5).toFixed(4),
+    tokens: [
+      { mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", name: "USD Coin", symbol: "USDC", balance: 1500000000, decimals: 6, displayBalance: 1500 },
+      { mint: "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN", name: "Jupiter", symbol: "JUP", balance: 8250000000, decimals: 6, displayBalance: 8250 },
+      { mint: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", name: "Bonk", symbol: "BONK", balance: 150000000000, decimals: 5, displayBalance: 1500000 },
+      { mint: "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", name: "dogwifhat", symbol: "WIF", balance: 345000000000, decimals: 9, displayBalance: 345 },
+      { mint: "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3", name: "Pyth Network", symbol: "PYTH", balance: 12000000000, decimals: 6, displayBalance: 12000 },
+    ],
+  };
+}
+
 // ─── Colors ─────────────────────────────────────────────────────────────────
 
 const C = {
@@ -408,6 +421,8 @@ export default function App() {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [data, setData] = useState(null);
+  const [holdings, setHoldings] = useState(null);
+  const [holdingsError, setHoldingsError] = useState("");
   const [isDemo, setIsDemo] = useState(false);
   const [tab, setTab] = useState("flow");
   const didAutoRun = useRef(false);
@@ -432,16 +447,31 @@ export default function App() {
       return;
     }
     setLoading(true); setError(""); setData(null); setIsDemo(false);
+    setHoldings(null); setHoldingsError("");
     try {
-      const txs = await fetchTxs(wallet.trim(), apiKey.trim(), setProgress);
-      if (!txs.length) {
+      // Fetch transactions and holdings in parallel
+      const [txs, holdingsResult] = await Promise.allSettled([
+        fetchTxs(wallet.trim(), apiKey.trim(), setProgress),
+        fetchHoldings(wallet.trim(), apiKey.trim()),
+      ]);
+
+      // Handle holdings result (non-blocking)
+      if (holdingsResult.status === "fulfilled") {
+        setHoldings(holdingsResult.value);
+      } else {
+        setHoldingsError("Could not load token holdings");
+      }
+
+      // Handle transactions result
+      if (txs.status === "rejected") throw txs.reason;
+      const txData = txs.value;
+      if (!txData.length) {
         setError("No transactions in last 15 days.");
         setLoading(false);
-        setProgress(""); // FIX #4: Clear progress on early return
+        setProgress("");
         return;
       }
-      setData(analyze(wallet.trim(), txs));
-      // FIX #2: Update URL only after successful analysis
+      setData(analyze(wallet.trim(), txData));
       updateUrlParam("wallet", wallet.trim());
     } catch (e) {
       setError(e.message);
@@ -464,7 +494,9 @@ export default function App() {
   }, [handleAnalyze, apiKey]);
 
   const handleDemo = useCallback(() => {
-    setData(genDemo()); setIsDemo(true); setError(""); setWallet("DemoWallet...");
+    setData(genDemo()); setIsDemo(true); setError("");
+    setWallet("DemoWallet...");
+    setHoldings(genDemoHoldings()); setHoldingsError("");
   }, []);
 
   const shareUrl = useMemo(() => {
@@ -572,6 +604,8 @@ export default function App() {
       {data && (
         <main style={{ maxWidth: 1100, margin: "0 auto", padding: "20px 24px 40px" }}>
           {isDemo && <div style={{ padding: "8px 14px", borderRadius: 8, marginBottom: 16, background: C.purpleDim, fontSize: 11, color: C.purple }}>Demo data. Paste a real wallet + API key for live results.</div>}
+
+          <HoldingsPanel holdings={holdings} holdingsError={holdingsError} />
 
           {/* 1 HOUR */}
           <SL icon="⚡" label="Last 1 Hour" color={C.yellow} />
@@ -724,6 +758,68 @@ export default function App() {
 // ═════════════════════════════════════════════════════════════════════════════
 // COMPONENTS
 // ═════════════════════════════════════════════════════════════════════════════
+
+function HoldingsPanel({ holdings, holdingsError }) {
+  if (holdingsError) {
+    return (
+      <>
+        <SL icon="◆" label="Current Holdings" color={C.accent} />
+        <div style={{ padding: "12px 16px", borderRadius: 10, background: C.redDim, fontSize: 11, color: C.red, marginBottom: 8 }}>
+          {holdingsError}
+        </div>
+      </>
+    );
+  }
+  if (!holdings) return null;
+
+  const fmtBal = (val, decimals) => {
+    if (val >= 1_000_000) return (val / 1_000_000).toFixed(2) + "M";
+    if (val >= 1_000) return (val / 1_000).toFixed(2) + "K";
+    return val < 0.01 && val > 0
+      ? val.toFixed(Math.min(decimals, 8))
+      : val.toFixed(Math.min(decimals, 4));
+  };
+
+  return (
+    <>
+      <SL icon="◆" label="Current Holdings" color={C.accent} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 10, marginBottom: 14 }}>
+        <MS label="SOL Balance" value={`${holdings.sol.toFixed(4)} SOL`} color={C.accent} />
+        <MS label="Token Types" value={holdings.tokens.length} color={C.cyan} />
+      </div>
+      {holdings.tokens.length > 0 && (
+        <div style={{ background: C.surface, borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden", marginBottom: 8 }}>
+          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, fontSize: 12, fontWeight: 600 }}>
+            SPL Token Holdings
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, minWidth: 500 }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                  {["Symbol", "Name", "Balance", "Mint"].map(h => (
+                    <th key={h} style={{ padding: "8px 12px", textAlign: "left", color: C.textDim, fontWeight: 500, fontSize: 9, textTransform: "uppercase", letterSpacing: 0.8 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {holdings.tokens.map(t => (
+                  <tr key={t.mint} style={{ borderBottom: `1px solid ${C.border}` }}
+                    onMouseEnter={e => e.currentTarget.style.background = C.surfaceHover}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    <td style={{ padding: "8px 12px", fontWeight: 700, color: C.yellow }}>{t.symbol}</td>
+                    <td style={{ padding: "8px 12px", color: C.textDim }}>{t.name}</td>
+                    <td style={{ padding: "8px 12px", fontWeight: 600, color: C.text }}>{fmtBal(t.displayBalance, t.decimals)}</td>
+                    <td style={{ padding: "8px 12px" }}><code style={{ fontSize: 9, background: C.bg, padding: "2px 5px", borderRadius: 4, color: C.textDim }}>{short(t.mint)}</code></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 function SL({ icon, label, color }) {
   return (
