@@ -281,6 +281,33 @@ function compWin(raw, ms) {
   };
 }
 
+// ─── 3-Day Hourly Trend ─────────────────────────────────────────────────
+
+function compHourlyTrend(raw) {
+  const cut = Date.now() - 3 * 86400000;
+  const ev = raw.filter(e => e.ts >= cut);
+
+  // Group by hour-of-day (0-23), aggregated across 3 days
+  const hourMap = {};
+  for (let h = 0; h < 24; h++) {
+    hourMap[h] = { hour: h, label: `${String(h).padStart(2, "0")}:00`, count: 0, incoming: 0, outgoing: 0 };
+  }
+  for (const e of ev) {
+    const h = new Date(e.ts).getHours();
+    hourMap[h].count++;
+    hourMap[h].incoming += e.incoming;
+    hourMap[h].outgoing += e.outgoing;
+  }
+
+  const byHour = Object.values(hourMap);
+  const ranked = byHour.slice().sort((a, b) => b.count - a.count);
+  const totalCount = ev.length;
+  const peakHour = ranked[0];
+  const quietHour = ranked[ranked.length - 1];
+
+  return { byHour, ranked, totalCount, peakHour, quietHour };
+}
+
 // ─── Demo ───────────────────────────────────────────────────────────────────
 
 function genDemo() {
@@ -343,7 +370,7 @@ function genDemo() {
     days: i + 1, label: `${i + 1}d`, wallets: dcm[i + 1] || 0,
   }));
 
-  // Raw events for 1h/6h/24h windows
+  // Raw events for 1h/6h/24h/3d windows
   const raw = [], now = Date.now();
   for (let k = 0; k < 15; k++) {
     raw.push({ ts: now - Math.random() * 3600000, incoming: +(Math.random() * 3).toFixed(4) * 1, outgoing: 0, counterparty: A[Math.floor(Math.random() * A.length)] });
@@ -356,6 +383,12 @@ function genDemo() {
   for (let m = 0; m < 50; m++) {
     raw.push({ ts: now - Math.random() * 86400000, incoming: +(Math.random() * 5).toFixed(4) * 1, outgoing: 0, counterparty: A[Math.floor(Math.random() * A.length)] });
     raw.push({ ts: now - Math.random() * 86400000, incoming: 0, outgoing: +(Math.random() * 4).toFixed(4) * 1, counterparty: A[Math.floor(Math.random() * A.length)] });
+  }
+  // Extra events for 1-3 day range (hourly trend)
+  for (let m = 0; m < 80; m++) {
+    const offset = 86400000 + Math.random() * 2 * 86400000; // 1-3 days ago
+    raw.push({ ts: now - offset, incoming: +(Math.random() * 4).toFixed(4) * 1, outgoing: 0, counterparty: A[Math.floor(Math.random() * A.length)] });
+    raw.push({ ts: now - offset, incoming: 0, outgoing: +(Math.random() * 3).toFixed(4) * 1, counterparty: A[Math.floor(Math.random() * A.length)] });
   }
 
   return {
@@ -511,6 +544,7 @@ export default function App() {
   const h1 = useMemo(() => data ? compWin(data.rawEvents, 3600000) : null, [data]);
   const h6 = useMemo(() => data ? compWin(data.rawEvents, 6 * 3600000) : null, [data]);
   const h24 = useMemo(() => data ? compWin(data.rawEvents, 86400000) : null, [data]);
+  const d3Trend = useMemo(() => data ? compHourlyTrend(data.rawEvents) : null, [data]);
   const netFlow = useMemo(() => data ? data.dailyData.map(d => ({ ...d, net: +(d.incoming - d.outgoing).toFixed(4) })) : [], [data]);
 
   // FIX #6: Pre-sort counterparties once for recurrence tab
@@ -618,6 +652,10 @@ export default function App() {
           {/* 24 HOURS */}
           <SL icon="◐" label="Last 24 Hours" color={C.cyan} />
           {h24 && <TWP win={h24} bucketLabel={fmtT} />}
+
+          {/* 3-DAY HOURLY TREND */}
+          <SL icon="◉" label="3-Day Hourly Activity Trend" color={C.yellow} />
+          {d3Trend && <HourlyTrendPanel trend={d3Trend} />}
 
           {/* 15-DAY TREND */}
           <SL icon="◇" label="15-Day Trend" color={C.accent} />
@@ -965,6 +1003,94 @@ function RecurrenceBreakdown({ recurrence, uniqueWallets }) {
           );
         })()}
       </div>
+    </div>
+  );
+}
+
+function HourlyTrendPanel({ trend }) {
+  const { byHour, ranked, totalCount, peakHour, quietHour } = trend;
+  const maxCount = Math.max(...ranked.map(r => r.count), 1);
+
+  return (
+    <div style={{ background: C.surface, borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden", marginBottom: 8 }}>
+      {/* Summary metrics */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)" }}>
+        <div style={{ padding: "14px 16px", borderRight: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 9, color: C.textDim, marginBottom: 5, letterSpacing: 0.8 }}>TOTAL ACTIVITY</div>
+          <div style={{ fontSize: 17, fontWeight: 700, color: C.yellow }}>{totalCount}</div>
+          <div style={{ fontSize: 9, color: C.textDim, marginTop: 2 }}>events in 3 days</div>
+        </div>
+        <div style={{ padding: "14px 16px", borderRight: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 9, color: C.textDim, marginBottom: 5, letterSpacing: 0.8 }}>PEAK HOUR</div>
+          <div style={{ fontSize: 17, fontWeight: 700, color: C.accent }}>{peakHour.label}</div>
+          <div style={{ fontSize: 9, color: C.textDim, marginTop: 2 }}>{peakHour.count} events</div>
+        </div>
+        <div style={{ padding: "14px 16px" }}>
+          <div style={{ fontSize: 9, color: C.textDim, marginBottom: 5, letterSpacing: 0.8 }}>QUIETEST HOUR</div>
+          <div style={{ fontSize: 17, fontWeight: 700, color: C.textMuted }}>{quietHour.label}</div>
+          <div style={{ fontSize: 9, color: C.textDim, marginTop: 2 }}>{quietHour.count} events</div>
+        </div>
+      </div>
+
+      {/* 24h bar chart (chronological) */}
+      <div style={{ borderTop: `1px solid ${C.border}`, padding: "12px 12px 6px" }}>
+        <div style={{ fontSize: 9, color: C.textDim, marginBottom: 8, letterSpacing: 0.5, padding: "0 4px" }}>ACTIVITY BY HOUR (UTC)</div>
+        <ResponsiveContainer width="100%" height={120}>
+          <BarChart data={byHour} barCategoryGap="10%">
+            <XAxis dataKey="label" tick={{ fill: C.textDim, fontSize: 8 }} stroke={C.border} interval={2} />
+            <YAxis tick={{ fill: C.textDim, fontSize: 8 }} stroke={C.border} allowDecimals={false} width={30} />
+            <Tooltip content={<HourTT />} />
+            <Bar dataKey="count" name="Events" radius={[2, 2, 0, 0]}>
+              {byHour.map((entry, i) => (
+                <Cell key={i} fill={entry.hour === peakHour.hour ? C.accent : C.yellow} fillOpacity={Math.max(0.3, entry.count / maxCount)} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Ranked list (ordered by activity count) */}
+      <div style={{ borderTop: `1px solid ${C.border}`, padding: "12px 16px" }}>
+        <div style={{ fontSize: 9, color: C.textDim, marginBottom: 8, letterSpacing: 0.5 }}>RANKED BY ACTIVITY COUNT</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {ranked.filter(r => r.count > 0).map((r, i) => {
+            const pct = (r.count / maxCount) * 100;
+            return (
+              <div key={r.hour} style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 8px", borderRadius: 6, background: C.bg, fontSize: 10 }}>
+                <span style={{ color: i < 3 ? C.accent : C.textDim, fontWeight: 700, minWidth: 18, textAlign: "right" }}>#{i + 1}</span>
+                <code style={{ color: C.text, fontSize: 10, fontWeight: 600, minWidth: 44 }}>{r.label}</code>
+                <span style={{ color: C.yellow, fontWeight: 600, minWidth: 30 }}>{r.count}x</span>
+                {r.incoming > 0 && <span style={{ color: C.accent, fontSize: 9 }}>↓{r.incoming.toFixed(2)}</span>}
+                {r.outgoing > 0 && <span style={{ color: C.red, fontSize: 9 }}>↑{r.outgoing.toFixed(2)}</span>}
+                <div style={{ flex: 1 }}>
+                  <div style={{ height: 3, borderRadius: 2, background: C.border, overflow: "hidden" }}>
+                    <div style={{ width: `${pct}%`, height: "100%", borderRadius: 2, background: i < 3 ? C.accent : C.yellow, opacity: 0.7 }} />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {ranked.filter(r => r.count === 0).length > 0 && (
+            <div style={{ fontSize: 9, color: C.textMuted, padding: "4px 8px" }}>
+              {ranked.filter(r => r.count === 0).length} hours with no activity
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HourTT({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0]?.payload;
+  if (!d) return null;
+  return (
+    <div style={{ background: C.surface, border: `1px solid ${C.borderLight}`, borderRadius: 8, padding: "10px 14px", fontSize: 10, boxShadow: "0 6px 24px rgba(0,0,0,0.5)" }}>
+      <div style={{ color: C.text, fontWeight: 600 }}>{d.label}</div>
+      <div style={{ color: C.yellow }}>Events: <span style={{ fontWeight: 700 }}>{d.count}</span></div>
+      {d.incoming > 0 && <div style={{ color: C.accent }}>In: {d.incoming.toFixed(4)} SOL</div>}
+      {d.outgoing > 0 && <div style={{ color: C.red }}>Out: {d.outgoing.toFixed(4)} SOL</div>}
     </div>
   );
 }
