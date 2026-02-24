@@ -17,11 +17,15 @@ const fmtT = (ts) => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minu
 
 // ─── Storage: URL params > localStorage ─────────────────────────────────────
 
-function getInitial(paramKey, storageKey) {
+function getInitial(paramKey, storageKey, fallbackParamKey) {
   try {
     const url = new URL(window.location.href);
     const v = url.searchParams.get(paramKey);
     if (v) return v;
+    if (fallbackParamKey) {
+      const fb = url.searchParams.get(fallbackParamKey);
+      if (fb) return fb;
+    }
   } catch {}
   try { return localStorage.getItem(storageKey) || ""; }
   catch { return ""; }
@@ -446,100 +450,149 @@ const DAY_COLORS = [
 // ═════════════════════════════════════════════════════════════════════════════
 
 export default function App() {
-  const [wallet, setWallet] = useState(() => getInitial("wallet", "sol-dash-wallet"));
+  // Multi-wallet state (3 slots)
+  const [wallets, setWallets] = useState(() => [
+    getInitial("wallet1", "sol-dash-wallet1", "wallet"),
+    getInitial("wallet2", "sol-dash-wallet2"),
+    getInitial("wallet3", "sol-dash-wallet3"),
+  ]);
   const [apiKey, setApiKey] = useState(() => getInitial("key", "sol-dash-apikey"));
   const [showKey, setShowKey] = useState(false);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
-  const [error, setError] = useState("");
+  const [errors, setErrors] = useState(["", "", ""]);
   const [copied, setCopied] = useState(false);
-  const [data, setData] = useState(null);
-  const [holdings, setHoldings] = useState(null);
-  const [holdingsError, setHoldingsError] = useState("");
+  const [results, setResults] = useState([null, null, null]);
+  const [holdingsArr, setHoldingsArr] = useState([null, null, null]);
+  const [holdingsErrors, setHoldingsErrors] = useState(["", "", ""]);
   const [isDemo, setIsDemo] = useState(false);
   const [tab, setTab] = useState("flow");
+  const [activeTab, setActiveTab] = useState(0);
   const didAutoRun = useRef(false);
 
-  // FIX #1: Only persist non-empty values to localStorage
+  const setWallet = useCallback((idx, val) => {
+    setWallets(prev => { const n = [...prev]; n[idx] = val; return n; });
+  }, []);
+
+  // Persist API key
   useEffect(() => {
     if (apiKey.trim()) persist("sol-dash-apikey", apiKey.trim());
   }, [apiKey]);
 
+  // Persist wallet addresses
   useEffect(() => {
-    if (wallet.trim() && !wallet.startsWith("Demo")) {
-      persist("sol-dash-wallet", wallet.trim());
-    }
-  }, [wallet]);
-
-  // FIX #2: URL updated only on Analyze, not on every keystroke
-  // (moved updateUrlParam call into handleAnalyze)
+    wallets.forEach((w, i) => {
+      if (w.trim() && !w.startsWith("Demo")) {
+        persist(`sol-dash-wallet${i + 1}`, w.trim());
+      }
+    });
+  }, [wallets]);
 
   const handleAnalyze = useCallback(async () => {
-    if (!wallet.trim() || !apiKey.trim()) {
-      setError("Enter wallet address + Helius API key");
+    const key = apiKey.trim();
+    const filled = wallets.map(w => w.trim()).filter(Boolean);
+    if (!filled.length || !key) {
+      setErrors(["Enter at least one wallet address + Helius API key", "", ""]);
       return;
     }
-    setLoading(true); setError(""); setData(null); setIsDemo(false);
-    setHoldings(null); setHoldingsError("");
-    try {
-      // Fetch transactions and holdings in parallel
-      const [txs, holdingsResult] = await Promise.allSettled([
-        fetchTxs(wallet.trim(), apiKey.trim(), setProgress),
-        fetchHoldings(wallet.trim(), apiKey.trim()),
-      ]);
+    setLoading(true);
+    setErrors(["", "", ""]);
+    setResults([null, null, null]);
+    setHoldingsArr([null, null, null]);
+    setHoldingsErrors(["", "", ""]);
+    setIsDemo(false);
 
-      // Handle holdings result (non-blocking)
-      if (holdingsResult.status === "fulfilled") {
-        setHoldings(holdingsResult.value);
-      } else {
-        setHoldingsError("Could not load token holdings");
-      }
+    const newResults = [null, null, null];
+    const newHoldings = [null, null, null];
+    const newErrors = ["", "", ""];
+    const newHoldingsErrors = ["", "", ""];
 
-      // Handle transactions result
-      if (txs.status === "rejected") throw txs.reason;
-      const txData = txs.value;
-      if (!txData.length) {
-        setError("No transactions in last 15 days.");
-        setLoading(false);
-        setProgress("");
-        return;
-      }
-      setData(analyze(wallet.trim(), txData));
-      updateUrlParam("wallet", wallet.trim());
-    } catch (e) {
-      setError(e.message);
-    }
+    // Fetch all non-empty wallets in parallel
+    const jobs = wallets.map((w, i) => {
+      const addr = w.trim();
+      if (!addr) return Promise.resolve(null);
+      return Promise.allSettled([
+        fetchTxs(addr, key, (msg) => setProgress(`Wallet ${i + 1}: ${msg}`)),
+        fetchHoldings(addr, key),
+      ]).then(([txResult, holdResult]) => {
+        if (holdResult.status === "fulfilled") {
+          newHoldings[i] = holdResult.value;
+        } else {
+          newHoldingsErrors[i] = "Could not load token holdings";
+        }
+        if (txResult.status === "rejected") {
+          newErrors[i] = txResult.reason?.message || "Fetch failed";
+          return;
+        }
+        const txData = txResult.value;
+        if (!txData?.length) {
+          newErrors[i] = "No transactions in last 15 days.";
+          return;
+        }
+        newResults[i] = analyze(addr, txData);
+      });
+    });
+
+    await Promise.all(jobs);
+    setResults(newResults);
+    setHoldingsArr(newHoldings);
+    setErrors(newErrors);
+    setHoldingsErrors(newHoldingsErrors);
+
+    // Auto-select first wallet with results
+    const firstWithData = newResults.findIndex(r => r !== null);
+    if (firstWithData >= 0) setActiveTab(firstWithData);
+
+    // Update URL params
+    wallets.forEach((w, i) => {
+      updateUrlParam(`wallet${i + 1}`, w.trim());
+    });
+    // Clean up old single-wallet param
+    updateUrlParam("wallet", "");
+
     setLoading(false);
     setProgress("");
-  }, [wallet, apiKey]);
+  }, [wallets, apiKey]);
 
-  // FIX #3: Auto-run with proper deps
+  // Auto-run with proper deps
   useEffect(() => {
     if (didAutoRun.current) return;
     try {
       const url = new URL(window.location.href);
-      if (url.searchParams.get("wallet") && (url.searchParams.get("key") || apiKey)) {
+      const hasWallet = url.searchParams.get("wallet1") || url.searchParams.get("wallet");
+      if (hasWallet && (url.searchParams.get("key") || apiKey)) {
         didAutoRun.current = true;
-        // Small delay to ensure state is settled
         setTimeout(() => handleAnalyze(), 100);
       }
     } catch {}
   }, [handleAnalyze, apiKey]);
 
   const handleDemo = useCallback(() => {
-    setData(genDemo()); setIsDemo(true); setError("");
-    setWallet("DemoWallet...");
-    setHoldings(genDemoHoldings()); setHoldingsError("");
+    setResults([genDemo(), genDemo(), genDemo()]);
+    setHoldingsArr([genDemoHoldings(), genDemoHoldings(), genDemoHoldings()]);
+    setHoldingsErrors(["", "", ""]);
+    setErrors(["", "", ""]);
+    setIsDemo(true);
+    setWallets(["DemoWallet1...", "DemoWallet2...", "DemoWallet3..."]);
+    setActiveTab(0);
   }, []);
 
   const shareUrl = useMemo(() => {
-    if (!wallet || wallet.startsWith("Demo")) return "";
+    const filled = wallets.filter(w => w.trim() && !w.startsWith("Demo"));
+    if (!filled.length) return "";
     try {
       const u = new URL(window.location.origin + window.location.pathname);
-      u.searchParams.set("wallet", wallet);
+      wallets.forEach((w, i) => { if (w.trim() && !w.startsWith("Demo")) u.searchParams.set(`wallet${i + 1}`, w.trim()); });
       return u.toString();
     } catch { return ""; }
-  }, [wallet]);
+  }, [wallets]);
+
+  // Active wallet's data
+  const data = results[activeTab];
+  const holdings = holdingsArr[activeTab];
+  const holdingsError = holdingsErrors[activeTab];
+  const hasAnyResults = results.some(r => r !== null);
+  const resultCount = results.filter(r => r !== null).length;
 
   const h1 = useMemo(() => data ? compWin(data.rawEvents, 3600000) : null, [data]);
   const h6 = useMemo(() => data ? compWin(data.rawEvents, 6 * 3600000) : null, [data]);
@@ -547,7 +600,6 @@ export default function App() {
   const d3Trend = useMemo(() => data ? compHourlyTrend(data.rawEvents) : null, [data]);
   const netFlow = useMemo(() => data ? data.dailyData.map(d => ({ ...d, net: +(d.incoming - d.outgoing).toFixed(4) })) : [], [data]);
 
-  // FIX #6: Pre-sort counterparties once for recurrence tab
   const topByDays = useMemo(() => {
     if (!data) return [];
     return data.counterparties.slice().sort((a, b) => b.activeDays - a.activeDays).slice(0, 10);
@@ -588,16 +640,26 @@ export default function App() {
             )}
           </div>
 
-          {/* Wallet + buttons */}
+          {/* Wallet inputs */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+            {[0, 1, 2].map(i => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 9, color: C.textDim, minWidth: 52, textAlign: "right" }}>Wallet {i + 1}</span>
+                <input type="text" value={wallets[i]} onChange={e => setWallet(i, e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && handleAnalyze()}
+                  placeholder={i === 0 ? "Solana wallet address…" : "Wallet address (optional)…"}
+                  style={{ flex: 1, minWidth: 200, padding: "9px 12px", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, color: C.text, fontSize: 11, fontFamily: "inherit", outline: "none" }}
+                  onFocus={e => e.target.style.borderColor = C.accent}
+                  onBlur={e => e.target.style.borderColor = C.border} />
+                {errors[i] && <span style={{ fontSize: 9, color: C.red, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{errors[i]}</span>}
+              </div>
+            ))}
+          </div>
+
+          {/* Buttons */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <input type="text" value={wallet} onChange={e => setWallet(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && handleAnalyze()}
-              placeholder="Solana wallet address…"
-              style={{ flex: 1, minWidth: 260, padding: "10px 14px", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontSize: 12, fontFamily: "inherit", outline: "none" }}
-              onFocus={e => e.target.style.borderColor = C.accent}
-              onBlur={e => e.target.style.borderColor = C.border} />
             <button onClick={handleAnalyze} disabled={loading}
-              style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: loading ? C.surface : C.gradient, color: loading ? C.textDim : C.bg, fontWeight: 700, fontSize: 12, cursor: loading ? "wait" : "pointer", fontFamily: "inherit", opacity: (!wallet.trim() || !apiKey.trim()) ? 0.4 : 1 }}>
+              style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: loading ? C.surface : C.gradient, color: loading ? C.textDim : C.bg, fontWeight: 700, fontSize: 12, cursor: loading ? "wait" : "pointer", fontFamily: "inherit", opacity: (!wallets[0].trim() || !apiKey.trim()) ? 0.4 : 1 }}>
               {loading ? "Analyzing…" : "Analyze"}</button>
             <button onClick={handleDemo} disabled={loading}
               style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.borderLight}`, background: "transparent", color: C.textDim, fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
@@ -623,24 +685,36 @@ export default function App() {
                   setTimeout(() => setCopied(false), 2000);
                 });
               }}
-                title="Copy shareable link (wallet only, no API key)"
+                title="Copy shareable link (wallets only, no API key)"
                 style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${copied ? C.accent : C.borderLight}`, background: copied ? C.accentDim : "transparent", color: copied ? C.accent : C.textDim, fontSize: 11, cursor: "pointer", fontFamily: "inherit", transition: "all 0.2s" }}>
                 {copied ? "Copied!" : "Share Link"}</button>
             )}
           </div>
 
           {progress && <div style={{ marginTop: 10, fontSize: 11, color: C.accent }}>{progress}</div>}
-          {error && <div style={{ marginTop: 10, padding: "8px 14px", borderRadius: 8, background: C.redDim, color: C.red, fontSize: 11 }}>{error}</div>}
         </div>
       </header>
 
       {/* ═══ DASHBOARD ═══ */}
-      {data && (
+      {hasAnyResults && (
         <main style={{ maxWidth: 1100, margin: "0 auto", padding: "20px 24px 40px" }}>
           {isDemo && <div style={{ padding: "8px 14px", borderRadius: 8, marginBottom: 16, background: C.purpleDim, fontSize: 11, color: C.purple }}>Demo data. Paste a real wallet + API key for live results.</div>}
 
-          <HoldingsPanel holdings={holdings} holdingsError={holdingsError} />
+          {/* Wallet tabs (only when 2+ wallets have data) */}
+          {resultCount > 1 && (
+            <div style={{ display: "flex", gap: 2, marginBottom: 16, background: C.surface, borderRadius: 8, padding: 3, border: `1px solid ${C.border}` }}>
+              {results.map((r, i) => r !== null && (
+                <button key={i} onClick={() => setActiveTab(i)}
+                  style={{ flex: 1, padding: "8px 12px", borderRadius: 6, border: "none", cursor: "pointer", background: activeTab === i ? C.accentDim : "transparent", color: activeTab === i ? C.accent : C.textDim, fontSize: 11, fontWeight: 600, fontFamily: "inherit", borderBottom: activeTab === i ? `2px solid ${C.accent}` : "2px solid transparent" }}>
+                  Wallet {i + 1}: {short(wallets[i])}
+                </button>
+              ))}
+            </div>
+          )}
 
+          {data && <HoldingsPanel holdings={holdings} holdingsError={holdingsError} />}
+
+          {data && (<>
           {/* 1 HOUR */}
           <SL icon="⚡" label="Last 1 Hour" color={C.yellow} />
           {h1 && <TWP win={h1} bucketLabel={fmtT} />}
@@ -761,16 +835,17 @@ export default function App() {
           <div style={{ marginTop: 32, padding: "16px 0", borderTop: `1px solid ${C.border}`, textAlign: "center", fontSize: 10, color: C.textMuted }}>
             Powered by Helius Enhanced Transactions API
           </div>
+          </>)}
         </main>
       )}
 
       {/* ═══ EMPTY STATE ═══ */}
-      {!data && !loading && (
+      {!hasAnyResults && !loading && (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "70px 24px", textAlign: "center" }}>
           <div style={{ fontSize: 44, marginBottom: 14, opacity: 0.12 }}>◈</div>
           <div style={{ fontSize: 13, color: C.textDim, maxWidth: 420, lineHeight: 1.7 }}>
-            Enter a Solana wallet to see 1-hour, 24-hour, and 15-day transaction analytics.
-            <br /><span style={{ fontSize: 10, color: C.textMuted }}>Supports URL params: <code style={{ color: C.accent, fontSize: 10 }}>?wallet=...&key=...</code></span>
+            Enter up to 3 Solana wallets to see 1-hour, 24-hour, and 15-day transaction analytics.
+            <br /><span style={{ fontSize: 10, color: C.textMuted }}>Supports URL params: <code style={{ color: C.accent, fontSize: 10 }}>?wallet1=...&wallet2=...&key=...</code></span>
           </div>
           <button onClick={handleDemo}
             style={{ marginTop: 20, padding: "9px 22px", borderRadius: 8, border: `1px solid ${C.borderLight}`, background: "transparent", color: C.textDim, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
