@@ -79,32 +79,30 @@ async function fetchTxs(wallet, apiKey, onProgress) {
 async function fetchHoldings(wallet, apiKey) {
   const rpcUrl = `${HELIUS_RPC}/?api-key=${apiKey}`;
 
-  // Fetch SOL balance and token assets in parallel
-  const [balRes, assetsRes] = await Promise.all([
-    fetch(rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0", id: "sol-bal",
-        method: "getBalance",
-        params: [wallet],
-      }),
+  // Fetch SOL balance and token assets sequentially to avoid RPC rate-limits
+  const balRes = await fetch(rpcUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0", id: "sol-bal",
+      method: "getBalance",
+      params: [wallet],
     }),
-    fetch(rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0", id: "das-assets",
-        method: "getAssetsByOwner",
-        params: {
-          ownerAddress: wallet,
-          displayOptions: { showFungible: true, showNativeBalance: false },
-          page: 1,
-          limit: 1000,
-        },
-      }),
+  });
+  const assetsRes = await fetch(rpcUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0", id: "das-assets",
+      method: "getAssetsByOwner",
+      params: {
+        ownerAddress: wallet,
+        displayOptions: { showFungible: true, showNativeBalance: false },
+        page: 1,
+        limit: 1000,
+      },
     }),
-  ]);
+  });
 
   if (!balRes.ok) throw new Error(`Balance fetch failed: ${balRes.status}`);
   if (!assetsRes.ok) throw new Error(`Assets fetch failed: ${assetsRes.status}`);
@@ -507,33 +505,30 @@ export default function App() {
     const newErrors = ["", "", ""];
     const newHoldingsErrors = ["", "", ""];
 
-    // Fetch all non-empty wallets in parallel
-    const jobs = wallets.map((w, i) => {
-      const addr = w.trim();
-      if (!addr) return Promise.resolve(null);
-      return Promise.allSettled([
-        fetchTxs(addr, key, (msg) => setProgress(`Wallet ${i + 1}: ${msg}`)),
-        fetchHoldings(addr, key),
-      ]).then(([txResult, holdResult]) => {
-        if (holdResult.status === "fulfilled") {
-          newHoldings[i] = holdResult.value;
-        } else {
-          newHoldingsErrors[i] = "Could not load token holdings";
-        }
-        if (txResult.status === "rejected") {
-          newErrors[i] = txResult.reason?.message || "Fetch failed";
-          return;
-        }
-        const txData = txResult.value;
+    // Fetch wallets sequentially to avoid RPC rate-limits
+    for (let i = 0; i < wallets.length; i++) {
+      const addr = wallets[i].trim();
+      if (!addr) continue;
+
+      // Fetch transactions
+      try {
+        const txData = await fetchTxs(addr, key, (msg) => setProgress(`Wallet ${i + 1}: ${msg}`));
         if (!txData?.length) {
           newErrors[i] = "No transactions in last 15 days.";
-          return;
+        } else {
+          newResults[i] = analyze(addr, txData);
         }
-        newResults[i] = analyze(addr, txData);
-      });
-    });
+      } catch (err) {
+        newErrors[i] = err?.message || "Fetch failed";
+      }
 
-    await Promise.all(jobs);
+      // Fetch holdings
+      try {
+        newHoldings[i] = await fetchHoldings(addr, key);
+      } catch {
+        newHoldingsErrors[i] = "Could not load token holdings";
+      }
+    }
     setResults(newResults);
     setHoldingsArr(newHoldings);
     setErrors(newErrors);
