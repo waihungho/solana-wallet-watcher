@@ -448,21 +448,23 @@ const DAY_COLORS = [
 // ═════════════════════════════════════════════════════════════════════════════
 
 export default function App() {
-  // Multi-wallet state (3 slots)
+  // Multi-wallet state (5 slots)
   const [wallets, setWallets] = useState(() => [
     getInitial("wallet1", "sol-dash-wallet1", "wallet"),
     getInitial("wallet2", "sol-dash-wallet2"),
     getInitial("wallet3", "sol-dash-wallet3"),
+    getInitial("wallet4", "sol-dash-wallet4"),
+    getInitial("wallet5", "sol-dash-wallet5"),
   ]);
   const [apiKey, setApiKey] = useState(() => getInitial("key", "sol-dash-apikey"));
   const [showKey, setShowKey] = useState(false);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
-  const [errors, setErrors] = useState(["", "", ""]);
+  const [errors, setErrors] = useState(["", "", "", "", ""]);
   const [copied, setCopied] = useState(false);
-  const [results, setResults] = useState([null, null, null]);
-  const [holdingsArr, setHoldingsArr] = useState([null, null, null]);
-  const [holdingsErrors, setHoldingsErrors] = useState(["", "", ""]);
+  const [results, setResults] = useState([null, null, null, null, null]);
+  const [holdingsArr, setHoldingsArr] = useState([null, null, null, null, null]);
+  const [holdingsErrors, setHoldingsErrors] = useState(["", "", "", "", ""]);
   const [isDemo, setIsDemo] = useState(false);
   const [tab, setTab] = useState("flow");
   const [activeTab, setActiveTab] = useState(0);
@@ -494,16 +496,16 @@ export default function App() {
       return;
     }
     setLoading(true);
-    setErrors(["", "", ""]);
-    setResults([null, null, null]);
-    setHoldingsArr([null, null, null]);
-    setHoldingsErrors(["", "", ""]);
+    setErrors(["", "", "", "", ""]);
+    setResults([null, null, null, null, null]);
+    setHoldingsArr([null, null, null, null, null]);
+    setHoldingsErrors(["", "", "", "", ""]);
     setIsDemo(false);
 
-    const newResults = [null, null, null];
-    const newHoldings = [null, null, null];
-    const newErrors = ["", "", ""];
-    const newHoldingsErrors = ["", "", ""];
+    const newResults = [null, null, null, null, null];
+    const newHoldings = [null, null, null, null, null];
+    const newErrors = ["", "", "", "", ""];
+    const newHoldingsErrors = ["", "", "", "", ""];
 
     // Fetch wallets sequentially to avoid RPC rate-limits
     for (let i = 0; i < wallets.length; i++) {
@@ -563,12 +565,12 @@ export default function App() {
   }, [handleAnalyze, apiKey]);
 
   const handleDemo = useCallback(() => {
-    setResults([genDemo(), genDemo(), genDemo()]);
-    setHoldingsArr([genDemoHoldings(), genDemoHoldings(), genDemoHoldings()]);
-    setHoldingsErrors(["", "", ""]);
-    setErrors(["", "", ""]);
+    setResults([genDemo(), genDemo(), genDemo(), genDemo(), genDemo()]);
+    setHoldingsArr([genDemoHoldings(), genDemoHoldings(), genDemoHoldings(), genDemoHoldings(), genDemoHoldings()]);
+    setHoldingsErrors(["", "", "", "", ""]);
+    setErrors(["", "", "", "", ""]);
     setIsDemo(true);
-    setWallets(["DemoWallet1...", "DemoWallet2...", "DemoWallet3..."]);
+    setWallets(["DemoWallet1...", "DemoWallet2...", "DemoWallet3...", "DemoWallet4...", "DemoWallet5..."]);
     setActiveTab(0);
   }, []);
 
@@ -637,7 +639,7 @@ export default function App() {
 
           {/* Wallet inputs */}
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
-            {[0, 1, 2].map(i => (
+            {[0, 1, 2, 3, 4].map(i => (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontSize: 9, color: C.textDim, minWidth: 52, textAlign: "right" }}>Wallet {i + 1}</span>
                 <input type="text" value={wallets[i]} onChange={e => setWallet(i, e.target.value)}
@@ -839,8 +841,8 @@ export default function App() {
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "70px 24px", textAlign: "center" }}>
           <div style={{ fontSize: 44, marginBottom: 14, opacity: 0.12 }}>◈</div>
           <div style={{ fontSize: 13, color: C.textDim, maxWidth: 420, lineHeight: 1.7 }}>
-            Enter up to 3 Solana wallets to see 1-hour, 24-hour, and 15-day transaction analytics.
-            <br /><span style={{ fontSize: 10, color: C.textMuted }}>Supports URL params: <code style={{ color: C.accent, fontSize: 10 }}>?wallet1=...&wallet2=...&key=...</code></span>
+            Enter up to 5 Solana wallets to see 1-hour, 24-hour, and 15-day transaction analytics.
+            <br /><span style={{ fontSize: 10, color: C.textMuted }}>Supports URL params: <code style={{ color: C.accent, fontSize: 10 }}>?wallet1=...&wallet2=...&...&key=...</code></span>
           </div>
           <button onClick={handleDemo}
             style={{ marginTop: 20, padding: "9px 22px", borderRadius: 8, border: `1px solid ${C.borderLight}`, background: "transparent", color: C.textDim, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
