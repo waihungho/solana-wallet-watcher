@@ -7,7 +7,36 @@ import {
 
 const LAMPORTS = 1_000_000_000;
 const HELIUS = "https://api.helius.xyz/v0/addresses";
+const SOLANA_RPC = "https://api.mainnet-beta.solana.com";
 const HELIUS_RPC = "https://mainnet.helius-rpc.com";
+
+// Try official Solana RPC first; fall back to Helius on failure.
+// Note: DAS methods (getAssetsByOwner) are Helius-only — call rpcHelius() directly for those.
+async function rpcCall(method, params, apiKey) {
+  const body = JSON.stringify({ jsonrpc: "2.0", id: method, method, params });
+  const headers = { "Content-Type": "application/json" };
+  try {
+    const res = await fetch(SOLANA_RPC, { method: "POST", headers, body });
+    if (res.ok) {
+      const json = await res.json();
+      if (!json.error) return json;
+    }
+  } catch {}
+  // Fall back to Helius RPC
+  const res = await fetch(`${HELIUS_RPC}/?api-key=${apiKey}`, { method: "POST", headers, body });
+  if (!res.ok) throw new Error(`RPC error ${res.status}`);
+  return res.json();
+}
+
+async function rpcHelius(method, params, apiKey) {
+  const res = await fetch(`${HELIUS_RPC}/?api-key=${apiKey}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: method, method, params }),
+  });
+  if (!res.ok) throw new Error(`RPC error ${res.status}`);
+  return res.json();
+}
 
 // ─── Utility ────────────────────────────────────────────────────────────────
 
@@ -77,38 +106,17 @@ async function fetchTxs(wallet, apiKey, onProgress) {
 }
 
 async function fetchHoldings(wallet, apiKey) {
-  const rpcUrl = `${HELIUS_RPC}/?api-key=${apiKey}`;
-
-  // Fetch SOL balance and token assets sequentially to avoid RPC rate-limits
-  const balRes = await fetch(rpcUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0", id: "sol-bal",
-      method: "getBalance",
-      params: [wallet],
-    }),
-  });
-  const assetsRes = await fetch(rpcUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0", id: "das-assets",
-      method: "getAssetsByOwner",
-      params: {
-        ownerAddress: wallet,
-        displayOptions: { showFungible: true, showNativeBalance: false },
-        page: 1,
-        limit: 1000,
-      },
-    }),
-  });
-
-  if (!balRes.ok) throw new Error(`Balance fetch failed: ${balRes.status}`);
-  if (!assetsRes.ok) throw new Error(`Assets fetch failed: ${assetsRes.status}`);
-
-  const balJson = await balRes.json();
-  const assetsJson = await assetsRes.json();
+  // getBalance: try official Solana RPC first, fall back to Helius
+  // getAssetsByOwner: Helius DAS API only (not available on official RPC)
+  const [balJson, assetsJson] = await Promise.all([
+    rpcCall("getBalance", [wallet], apiKey),
+    rpcHelius("getAssetsByOwner", {
+      ownerAddress: wallet,
+      displayOptions: { showFungible: true, showNativeBalance: false },
+      page: 1,
+      limit: 1000,
+    }, apiKey),
+  ]);
 
   const sol = (balJson.result?.value ?? 0) / LAMPORTS;
 
