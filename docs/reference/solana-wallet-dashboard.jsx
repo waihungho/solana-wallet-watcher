@@ -7,28 +7,10 @@ import {
 
 const LAMPORTS = 1_000_000_000;
 const HELIUS = "https://api.helius.xyz/v0/addresses";
-const SOLANA_RPC = "https://api.mainnet-beta.solana.com";
 const HELIUS_RPC = "https://mainnet.helius-rpc.com";
 
-// Try official Solana RPC first; fall back to Helius on failure.
-// Note: DAS methods (getAssetsByOwner) are Helius-only — call rpcHelius() directly for those.
+// All RPC calls go through Helius — the official Solana public RPC blocks browser requests (403).
 async function rpcCall(method, params, apiKey) {
-  const body = JSON.stringify({ jsonrpc: "2.0", id: method, method, params });
-  const headers = { "Content-Type": "application/json" };
-  try {
-    const res = await fetch(SOLANA_RPC, { method: "POST", headers, body });
-    if (res.ok) {
-      const json = await res.json();
-      if (!json.error) return json;
-    }
-  } catch {}
-  // Fall back to Helius RPC
-  const res = await fetch(`${HELIUS_RPC}/?api-key=${apiKey}`, { method: "POST", headers, body });
-  if (!res.ok) throw new Error(`RPC error ${res.status}`);
-  return res.json();
-}
-
-async function rpcHelius(method, params, apiKey) {
   const res = await fetch(`${HELIUS_RPC}/?api-key=${apiKey}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -110,7 +92,7 @@ async function fetchHoldings(wallet, apiKey) {
   // getAssetsByOwner: Helius DAS API only (not available on official RPC)
   const [balJson, assetsJson] = await Promise.all([
     rpcCall("getBalance", [wallet], apiKey),
-    rpcHelius("getAssetsByOwner", {
+    rpcCall("getAssetsByOwner", {
       ownerAddress: wallet,
       displayOptions: { showFungible: true, showNativeBalance: false },
       page: 1,
